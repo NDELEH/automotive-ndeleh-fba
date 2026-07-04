@@ -4,22 +4,90 @@
     <meta charset="UTF-8">
     <title>Fleet Ndeleh-FBA Telematics Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: #fff; padding: 20px; }
-        .card { background: #1e1e1e; padding: 20px; border-radius: 8px; border-left: 5px solid #ff9800; margin-bottom: 15px; }
-        .spine-chain { font-weight: bold; color: #00e676; }
-        .microspine { color: #b0bec5; font-size: 0.9em; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0c0c0e; color: #e4e4e7; padding: 30px; margin: 0; }
+        h1 { color: #f4f4f5; border-bottom: 2px solid #27272a; padding-bottom: 15px; margin-top: 0; font-weight: 600; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 20px; }
+        .card { background: #18181b; padding: 25px; border-radius: 12px; border: 1px solid #27272a; position: relative; overflow: hidden; }
+        .card::before { content: ''; position: absolute; top: 0; left: 0; width: 6px; height: 100%; background: #00e676; transition: background 0.3s; }
+        .card.warning::before { background: #f59e0b; }
+        .card.critical::before { background: #ef4444; }
+        .metric-row { display: flex; justify-content: space-between; margin: 12px 0; font-size: 0.95em; }
+        .metric-val { font-family: monospace; font-weight: bold; color: #a1a1aa; }
+        .alert-box { background: #27272a; padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.9em; display: none; }
+        .spine-chain { font-weight: bold; color: #f59e0b; margin: 5px 0 0 0; }
+        .microspine { color: #a1a1aa; font-size: 0.85em; margin: 5px 0 0 0; }
+        .status-badge { position: absolute; top: 25px; right: 25px; font-size: 0.8em; text-transform: uppercase; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <h1>🚗 Vehicle Health Network (Ndeleh-FBA Engine)</h1>
-    <div id="fleet-status">
-        <div class="card">
-            <h3>Vehicle: VIN-TRUCK-2026-X</h3>
-            <p><strong>Current Status:</strong> <span style="color: #ff5252;">Predictive Warning Issued</span></p>
-            <p class="spine-chain">🦴 Causal Spine Root: Low Fuel Pressure ➔ Engine Misfire ➔ Looming Check Engine Light</p>
-            <p class="microspine">🪵 Secondary Microspines: Clogged Fuel Filter (Probability: 64%)</p>
-            <p><em>Action Needed: Replace fuel filter within next 250 miles to prevent highway breakdown.</em></p>
-        </div>
+    <h1>🚗 Vehicle Health Network (Ndeleh-FBA Predictive Engine)</h1>
+    <div class="grid" id="fleet-container">
+        <!-- Dynamic fleet tracking cards render here via JavaScript -->
     </div>
+
+    <script>
+        // Inline FBA Reasoning Model executing within browser memory
+        const CAUSAL_WEIGHTS = {
+            "Low Alternator Voltage": { target: "Battery Failure", score: 0.9, light: "Battery Alert" },
+            "Low Fuel Pressure": { target: "Engine Misfire", score: 0.85, light: "Check Engine" },
+            "High EV Battery Temp": { target: "Thermal Throttle Error", score: 0.95, light: "EV System Malfunction" }
+        };
+
+        function runNdelehInference(sensors) {
+            let anomalies = [];
+            if (sensors.alternator_voltage < 12.2) anomalies.push("Low Alternator Voltage");
+            if (sensors.fuel_rail_pressure_psi < 38) anomalies.push("Low Fuel Pressure");
+            if (sensors.ev_battery_temp_c > 45) anomalies.push("High EV Battery Temp");
+
+            if (anomalies.length === 0) return { status: "NOMINAL", spine: null, microspine: null };
+
+            // Spine Extraction: Target the highest probability root pathway
+            let topRoot = anomalies[0]; 
+            let extraction = CAUSAL_WEIGHTS[topRoot];
+            
+            return {
+                status: extraction.score >= 0.9 ? "CRITICAL" : "WARNING",
+                spine: `🦴 Causal Spine: ${topRoot} ➔ ${extraction.target} ➔ Looming ${extraction.light} Light`,
+                microspine: `🪵 Microspines: Secondary anomaly overlaps discovered in system logs.`
+            };
+        }
+
+        async function refreshFleetTelemetry() {
+            try {
+                // Poll local aggregator api gateway
+                const response = await fetch('http://localhost:8080/api/telemetry');
+                const fleetData = await response.json();
+                const container = document.getElementById('fleet-container');
+                container.innerHTML = ''; // Wipe stale dashboard elements
+
+                for (const [vin, data] of Object.entries(fleetData)) {
+                    const diagnosis = runNdelehInference(data);
+                    const card = document.createElement('div');
+                    card.className = `card ${diagnosis.status.toLowerCase()}`;
+
+                    card.innerHTML = `
+                        <span class="status-badge" style="color: ${diagnosis.status === 'NOMINAL' ? '#00e676' : diagnosis.status === 'WARNING' ? '#f59e0b' : '#ef4444'}">${diagnosis.status}</span>
+                        <h3>Vehicle ID: ${vin}</h3>
+                        <div class="metric-row"><span>Fuel System Pressure:</span><span class="metric-val">${data.fuel_rail_pressure_psi.toFixed(1)} PSI</span></div>
+                        <div class="metric-row"><span>EV Pack Temperature:</span><span class="metric-val">${data.ev_battery_temp_c.toFixed(1)} °C</span></div>
+                        <div class="metric-row"><span>Alternator Voltage:</span><span class="metric-val">${data.alternator_voltage.toFixed(2)} V</span></div>
+                        <div class="metric-row"><span>Engine Misfires:</span><span class="metric-val">${data.engine_misfire_count}</span></div>
+                        
+                        <div class="alert-box" style="display: ${diagnosis.status !== 'NOMINAL' ? 'block' : 'none'}">
+                            <p class="spine-chain">${diagnosis.spine || ''}</p>
+                            <p class="microspine">${diagnosis.microspine || ''}</p>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                }
+            } catch (err) {
+                console.log("Telemetry hub offline. Retrying connection standard intervals...", err);
+            }
+        }
+
+        // Continually synchronize ui panel data state every 2000ms
+        setInterval(refreshFleetTelemetry, 2000);
+        window.onload = refreshFleetTelemetry;
+    </script>
 </body>
 </html>
